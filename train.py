@@ -1,4 +1,5 @@
-from model import  DLASeg
+
+
 from utils import load_model
 import torch
 import torch.optim as optim
@@ -11,21 +12,47 @@ import torchvision.transforms as transforms
 import numpy as np
 
 best_acc = 0
+train_batch=320
+test_batch=320
+# from model import DLASeg
+# transform_train = transforms.Compose([
+#     transforms.Resize((64,64)),
+#     transforms.RandomCrop(64, padding=4),
+#     transforms.RandomHorizontalFlip(),
+#     transforms.ToTensor(),
+#     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+# ])
+#
+# transform_test = transforms.Compose([
+#     transforms.Resize((64,64)),
+#     transforms.ToTensor(),
+#     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+# ])
+#
+# model = DLASeg('dla{}'.format(34), {'hm': 80, 'wh': 2, 'reg': 2, 'cla': 1},
+#                pretrained=True,
+#                down_ratio=4,
+#                final_kernel=1,
+#                last_level=5,
+#                head_conv=256,batch_size=train_batch).cuda()
+from networks.dlav0 import  DLASeg
 transform_train = transforms.Compose([
-    transforms.Resize((64,64)),
-    transforms.RandomCrop(64, padding=4),
+    transforms.Resize((512,512)),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
 
 transform_test = transforms.Compose([
-    transforms.Resize((64,64)),
+    transforms.Resize((512,512)),
     transforms.ToTensor(),
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
-train_batch=320
-test_batch=320
+model = DLASeg('dla{}'.format(34), {'hm': 80, 'wh': 2, 'reg': 2, 'cla': 1},
+               pretrained=True,
+               down_ratio=4,
+               head_conv=256,batch_size=train_batch).cuda()
+
 
 trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=train_batch, shuffle=True, num_workers=32)
@@ -35,13 +62,8 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=test_batch, shuffle
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
-model = DLASeg('dla{}'.format(34), {'hm': 80, 'wh': 2, 'reg': 2, 'cla': 1},
-               pretrained=True,
-               down_ratio=4,
-               final_kernel=1,
-               last_level=5,
-               head_conv=256,batch_size=train_batch).cuda()
-# model = load_model(model, '/home/rvlab/PycharmProjects/CenterNet/models/ctdet_coco_dla_2x.pth')
+
+# model = load_model(model, '/home/rvlab/PycharmProjects/CenterNet/models/ctdet_coco_dlav0_1x.pth')
 # for param in model.parameters():
 #     param.requires_grad = False
 #     print(param.requires_grad)
@@ -65,8 +87,6 @@ def train(epoch):
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to('cuda'), targets.to('cuda')
         optimizer.zero_grad()
-        if inputs.shape != (64,3,64,64):
-            temp=0
         outputs = model(inputs)
         outputs=torch.nn.functional.softmax(outputs[0]['cla'])
         loss = criterion(outputs, targets)

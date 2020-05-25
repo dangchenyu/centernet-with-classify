@@ -9,6 +9,8 @@ from os.path import join
 
 import torch
 from torch import nn
+import torch.nn.functional as F
+
 import torch.utils.model_zoo as model_zoo
 
 import numpy as np
@@ -23,8 +25,29 @@ def conv3x3(in_planes, out_planes, stride=1):
     "3x3 convolution with padding"
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                      padding=1, bias=False)
+class BasicBlock_nodil(nn.Module):
+    expansion = 1
 
+    def __init__(self, in_planes, planes, stride=1):
+        super(BasicBlock_nodil, self).__init__()
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(planes)
 
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion*planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion*planes, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(self.expansion*planes)
+            )
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        out = F.relu(out)
+        return out
 class BasicBlock(nn.Module):
     def __init__(self, inplanes, planes, stride=1, dilation=1):
         super(BasicBlock, self).__init__()
@@ -435,7 +458,14 @@ def fill_up_weights(up):
                 (1 - math.fabs(i / f - c)) * (1 - math.fabs(j / f - c))
     for c in range(1, w.size(0)):
         w[c, 0, :, :] = w[0, 0, :, :]
-
+class Reshape(nn.Module):
+    def __init__(self, *args):
+        super(Reshape, self).__init__()
+        self.shape = args
+    def setshape(self,*shape):
+        self.shape=shape
+    def forward(self, x):
+        return x.view(self.shape)
 
 class IDAUp(nn.Module):
     def __init__(self, node_kernel, out_dim, channels, up_factors):
@@ -531,11 +561,13 @@ def fill_fc_weights(layers):
                 nn.init.constant_(m.bias, 0)
 
 class DLASeg(nn.Module):
-    def __init__(self, base_name, heads,
-                 pretrained=True, down_ratio=4, head_conv=256):
+    def __init__(self, base_name, heads,batch_size,
+                 pretrained=True, down_ratio=4, head_conv=256,):
         super(DLASeg, self).__init__()
         assert down_ratio in [2, 4, 8, 16]
         self.heads = heads
+        self.batch_size=batch_size
+        self.reshape=Reshape(self.batch_size,-1)
         self.first_level = int(np.log2(down_ratio))
         self.base = globals()[base_name](
           pretrained=pretrained, return_levels=True)
@@ -561,6 +593,18 @@ class DLASeg(nn.Module):
                     padding=0, bias=True))
                 if 'hm' in head:
                     fc[-1].bias.data.fill_(-2.19)
+                if 'cla' in head:
+                    fc = nn.Sequential(BasicBlock_nodil(channels[self.first_level], channels[self.first_level]),
+                                       nn.Conv2d(channels[self.first_level], head_conv,
+                                                 kernel_size=3, padding=0, bias=True),
+                                       nn.BatchNorm2d(head_conv),
+                                       nn.ReLU(inplace=True),
+                                       nn.Conv2d(head_conv, 10, 3, stride=1, padding=0),
+                                       nn.BatchNorm2d(10),
+                                       nn.ReLU(inplace=True),
+                                       self.reshape,
+                                       nn.Linear(160, 10)
+                                       )
                 else:
                     fill_fc_weights(fc)
             else:
@@ -569,6 +613,7 @@ class DLASeg(nn.Module):
                   padding=0, bias=True)
                 if 'hm' in head:
                     fc.bias.data.fill_(-2.19)
+
                 else:
                     fill_fc_weights(fc)
             self.__setattr__(head, fc)
@@ -604,6 +649,9 @@ class DLASeg(nn.Module):
         # y = self.softmax(self.up(x))
         ret = {}
         for head in self.heads:
+            if x.shape[0] != self.batch_size:
+                self.batch_size=x.shape[0]
+                self.reshape.setshape(self.batch_size,-1)
             ret[head] = self.__getattr__(head)(x)
         return [ret]
 
